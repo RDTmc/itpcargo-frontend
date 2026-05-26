@@ -1,60 +1,54 @@
-name: Deploy Frontend to EC2
+name: Build and Deploy Frontend to EC2
 
 on:
   push:
     branches: [deploy]
 
 jobs:
-  deploy:
-    name: Deploy to EC2
+  build-and-deploy:
+    name: Build, Push to Docker Hub, Deploy to EC2
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/itpcargo-frontend:latest
+
       - name: Deploy to EC2 via SSH
         uses: appleboy/ssh-action@v1
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
-          ECR_REGISTRY: 791990722630.dkr.ecr.us-east-1.amazonaws.com
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN,ECR_REGISTRY
           script: |
-            # Configurar AWS credentials en EC2
-            mkdir -p ~/.aws
-            cat > ~/.aws/credentials << CREDS
-            [default]
-            aws_access_key_id = $AWS_ACCESS_KEY_ID
-            aws_secret_access_key = $AWS_SECRET_ACCESS_KEY
-            aws_session_token = $AWS_SESSION_TOKEN
-            CREDS
-            cat > ~/.aws/config << CFG
-            [default]
-            region = us-east-1
-            CFG
+            # Login Docker Hub en EC2
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
 
-            # Login ECR
-            aws ecr get-login-password --region us-east-1 | \
-              docker login --username AWS --password-stdin $ECR_REGISTRY
-
-            # Descargar imagen
-            docker pull $ECR_REGISTRY/itpcargo-frontend:latest
+            # Descargar imagen de Docker Hub
+            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/itpcargo-frontend:latest
 
             # Detener contenedor anterior
             docker stop itpcargo-frontend 2>/dev/null; docker rm itpcargo-frontend 2>/dev/null
 
-            # Levantar nuevo contenedor
+            # Levantar nuevo contenedor (puerto 80 host → 8080 contenedor)
             docker run -d \
               --name itpcargo-frontend \
               --restart unless-stopped \
-              -p 80:80 \
-              $ECR_REGISTRY/itpcargo-frontend:latest
+              -p 80:8080 \
+              ${{ secrets.DOCKERHUB_USERNAME }}/itpcargo-frontend:latest
 
             # Limpiar imagenes antiguas
             docker system prune -f
