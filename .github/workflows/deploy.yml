@@ -15,30 +15,49 @@ jobs:
 
       - name: Deploy to EC2 via SSH
         uses: appleboy/ssh-action@v1
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+          ECR_REGISTRY: 791990722630.dkr.ecr.us-east-1.amazonaws.com
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN,ECR_REGISTRY
           script: |
-            # Descargar ultima imagen de ECR
-            aws ecr get-login-password --region us-east-1 | \
-              docker login --username AWS --password-stdin 791990722630.dkr.ecr.us-east-1.amazonaws.com
+            # Configurar AWS credentials en EC2
+            mkdir -p ~/.aws
+            cat > ~/.aws/credentials << CREDS
+            [default]
+            aws_access_key_id = $AWS_ACCESS_KEY_ID
+            aws_secret_access_key = $AWS_SECRET_ACCESS_KEY
+            aws_session_token = $AWS_SESSION_TOKEN
+            CREDS
+            cat > ~/.aws/config << CFG
+            [default]
+            region = us-east-1
+            CFG
 
-            docker pull 791990722630.dkr.ecr.us-east-1.amazonaws.com/itpcargo-frontend:latest
+            # Login ECR
+            aws ecr get-login-password --region us-east-1 | \
+              docker login --username AWS --password-stdin $ECR_REGISTRY
+
+            # Descargar imagen
+            docker pull $ECR_REGISTRY/itpcargo-frontend:latest
 
             # Detener contenedor anterior
-            docker stop itpcargo-frontend || true
-            docker rm itpcargo-frontend || true
+            docker stop itpcargo-frontend 2>/dev/null; docker rm itpcargo-frontend 2>/dev/null
 
             # Levantar nuevo contenedor
             docker run -d \
               --name itpcargo-frontend \
               --restart unless-stopped \
               -p 80:80 \
-              791990722630.dkr.ecr.us-east-1.amazonaws.com/itpcargo-frontend:latest
+              $ECR_REGISTRY/itpcargo-frontend:latest
 
             # Limpiar imagenes antiguas
             docker system prune -f
 
             echo "Deploy completado"
-            docker ps | grep itpcargo-frontend
+            docker ps --filter name=itpcargo-frontend
