@@ -78,6 +78,7 @@ function Footer() {
           </span>
         </div>
       </div>
+      <h3>Soy un genio</h3>
     </footer>
   );
 }
